@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+tests/
+models/*.pt
+models/*.pth
+models/*.onnx
+.git
+.gitignore

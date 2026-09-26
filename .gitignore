@@ -4,3 +4,16 @@ __pycache__/
 *.pyc
 test-removed_files.txt
 train-removed_files.txt
+
+# Environment & Cache
+venv/
+.venv/
+.pytest_cache/
+*.egg-info/
+
+# Model binaries
+backend/models/*.pt
+backend/models/*.onnx
+backend/models/*.pth
+*.pt
+
