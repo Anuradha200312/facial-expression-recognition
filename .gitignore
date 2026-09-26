@@ -1,0 +1,6 @@
+temp_file/
+temp/
+__pycache__/
+*.pyc
+test-removed_files.txt
+train-removed_files.txt
