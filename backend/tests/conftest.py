@@ -1,5 +1,6 @@
 import io
 import sys
+import zipfile
 from pathlib import Path
 import pytest
 from PIL import Image
@@ -33,3 +34,13 @@ def sample_small_image_bytes():
 @pytest.fixture
 def sample_corrupt_bytes():
     return b"not an image binary payload"
+
+@pytest.fixture
+def sample_zip_bytes(sample_valid_image_bytes):
+    """Generates a zip archive containing 2 valid images."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("test1.jpg", sample_valid_image_bytes)
+        z.writestr("nested/test2.jpg", sample_valid_image_bytes)
+        z.writestr("readme.txt", "text file should be rejected")
+    return buf.getvalue()

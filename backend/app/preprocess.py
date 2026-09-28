@@ -1,8 +1,12 @@
 import io
+import os
+import zipfile
+from pathlib import Path
+from typing import List, Tuple, Dict, Any
 from PIL import Image, UnidentifiedImageError
 import numpy as np
 import cv2
-from .config import ALLOWED_EXTENSIONS, MIN_RESOLUTION
+from .config import ALLOWED_IMAGE_EXTENSIONS, MIN_RESOLUTION
 
 class ImageValidationError(Exception):
     pass
@@ -31,6 +35,37 @@ def validate_and_decode_image(image_bytes: bytes) -> np.ndarray:
     img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
 
     return img_bgr
+
+def extract_images_from_zip(zip_bytes: bytes) -> Tuple[List[Tuple[str, bytes]], List[Dict[str, str]]]:
+    """Extracts valid images from zip bytes. Returns list of (filename, bytes) and list of rejections."""
+    valid_images = []
+    rejections = []
+
+    try:
+        with zipfile.ZipFile(io.BytesIO(zip_bytes), "r") as z:
+            for member in z.infolist():
+                if member.is_dir():
+                    continue
+                filename = member.filename
+                # Skip OS metadata files
+                if filename.startswith("__MACOSX") or os.path.basename(filename).startswith("."):
+                    continue
+
+                ext = Path(filename).suffix.lower()
+                if ext not in ALLOWED_IMAGE_EXTENSIONS:
+                    rejections.append({"filename": filename, "reason": f"Unsupported extension '{ext}'"})
+                    continue
+
+                file_bytes = z.read(member)
+                try:
+                    validate_and_decode_image(file_bytes)
+                    valid_images.append((filename, file_bytes))
+                except ImageValidationError as ve:
+                    rejections.append({"filename": filename, "reason": str(ve)})
+    except zipfile.BadZipFile:
+        raise ImageValidationError("Invalid or corrupted zip archive file.")
+
+    return valid_images, rejections
 
 def expand_bbox(x1: int, y1: int, x2: int, y2: int, img_w: int, img_h: int, margin: float = 0.15):
     """Expands bounding box by margin ratio while keeping coordinates within image boundaries."""

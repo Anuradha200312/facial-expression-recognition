@@ -9,6 +9,7 @@ class BoundingBox(BaseModel):
 
 class FaceDetectionResult(BaseModel):
     face_id: int
+    track_id: Optional[int] = None
     bbox: BoundingBox
     face_confidence: float = Field(..., ge=0.0, le=1.0)
     emotion_label: str
