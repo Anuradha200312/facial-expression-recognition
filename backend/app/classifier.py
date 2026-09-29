@@ -1,4 +1,5 @@
 import os
+import cv2
 import numpy as np
 import torch
 from typing import Dict, Any
@@ -25,9 +26,13 @@ class EmotionClassifier:
                 self.is_loaded = True
             except Exception as e:
                 try:
-                    self.model = torch.load(self.model_path, map_location="cpu")
+                    device = "cuda" if torch.cuda.is_available() else "cpu"
+                    self.model = torch.load(self.model_path, map_location=device)
                     if hasattr(self.model, "eval"):
                         self.model.eval()
+                    if hasattr(self.model, "to"):
+                        self.model.to(device)
+                    self.device = device
                     self.is_loaded = True
                 except Exception as ex:
                     print(f"Warning: Failed to load PyTorch emotion model from {self.model_path}: {ex}")
@@ -63,8 +68,10 @@ class EmotionClassifier:
                     transforms.ToTensor(),
                     transforms.Normalize(mean=[0.5], std=[0.5])
                 ])
-                img_pil = Image.fromarray(face_crop_bgr)
+                img_pil = Image.fromarray(cv2.cvtColor(face_crop_bgr, cv2.COLOR_BGR2RGB))
                 tensor = transform(img_pil).unsqueeze(0)
+                if hasattr(self, "device"):
+                    tensor = tensor.to(self.device)
                 with torch.no_grad():
                     outputs = self.model(tensor)
                     probs = torch.softmax(outputs, dim=1)[0]

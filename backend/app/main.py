@@ -41,7 +41,7 @@ def health_check():
     }
 
 @app.post("/predict", response_model=PredictionResponse, tags=["Prediction"])
-async def predict(
+def predict(
     file: UploadFile = File(...),
     conf_thresh: float = Query(None, ge=0.0, le=1.0, description="Minimum face detection confidence threshold"),
     emotion_conf_thresh: float = Query(None, ge=0.0, le=1.0, description="Minimum emotion confidence threshold"),
@@ -49,7 +49,7 @@ async def predict(
     is_stream: bool = Query(False, description="Whether input is live camera frame for tracking")
 ):
     try:
-        contents = await file.read()
+        contents = file.file.read()
         payload, _ = pipeline.process_bytes(
             contents,
             filename=file.filename or "uploaded.jpg",
@@ -65,7 +65,7 @@ async def predict(
         raise HTTPException(status_code=500, detail=f"Internal prediction error: {str(e)}")
 
 @app.post("/predict-annotated", tags=["Prediction"])
-async def predict_annotated(
+def predict_annotated(
     file: UploadFile = File(...),
     conf_thresh: float = Query(None, ge=0.0, le=1.0),
     emotion_conf_thresh: float = Query(None, ge=0.0, le=1.0),
@@ -73,7 +73,7 @@ async def predict_annotated(
     is_stream: bool = Query(False)
 ):
     try:
-        contents = await file.read()
+        contents = file.file.read()
         _, annotated_bgr = pipeline.process_bytes(
             contents,
             filename=file.filename or "uploaded.jpg",
@@ -92,14 +92,14 @@ async def predict_annotated(
         raise HTTPException(status_code=500, detail=f"Internal prediction error: {str(e)}")
 
 @app.post("/predict-zip", tags=["Prediction"])
-async def predict_zip(
+def predict_zip(
     file: UploadFile = File(...),
     conf_thresh: float = Query(None, ge=0.0, le=1.0),
     emotion_conf_thresh: float = Query(None, ge=0.0, le=1.0),
     margin: float = Query(None, ge=0.0, le=0.5)
 ):
     try:
-        contents = await file.read()
+        contents = file.file.read()
         valid_images, rejections = extract_images_from_zip(contents)
 
         results = []
@@ -127,7 +127,7 @@ async def predict_zip(
         raise HTTPException(status_code=500, detail=f"Failed to process zip archive: {str(e)}")
 
 @app.post("/predict-video", tags=["Prediction"])
-async def predict_video(
+def predict_video(
     file: UploadFile = File(...),
     frame_stride: int = Query(DEFAULT_VIDEO_FRAME_STRIDE, ge=1, le=30),
     conf_thresh: float = Query(None, ge=0.0, le=1.0),
@@ -135,7 +135,7 @@ async def predict_video(
     margin: float = Query(None, ge=0.0, le=0.5)
 ):
     try:
-        contents = await file.read()
+        contents = file.file.read()
         payload, _ = pipeline.process_video_bytes(
             contents,
             filename=file.filename or "video.mp4",
@@ -149,7 +149,7 @@ async def predict_video(
         raise HTTPException(status_code=500, detail=f"Video processing failed: {str(e)}")
 
 @app.post("/predict-video-file", tags=["Prediction"])
-async def predict_video_file(
+def predict_video_file(
     file: UploadFile = File(...),
     frame_stride: int = Query(DEFAULT_VIDEO_FRAME_STRIDE, ge=1, le=30),
     conf_thresh: float = Query(None, ge=0.0, le=1.0),
@@ -157,7 +157,7 @@ async def predict_video_file(
     margin: float = Query(None, ge=0.0, le=0.5)
 ):
     try:
-        contents = await file.read()
+        contents = file.file.read()
         _, out_bytes = pipeline.process_video_bytes(
             contents,
             filename=file.filename or "video.mp4",

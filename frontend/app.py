@@ -1,6 +1,7 @@
 import os
 import io
 import time
+import queue
 import base64
 import zipfile
 import requests
@@ -8,6 +9,9 @@ import pandas as pd
 import numpy as np
 import streamlit as st
 from PIL import Image
+import cv2
+import av
+from streamlit_webrtc import webrtc_streamer, WebRtcMode, VideoProcessorBase
 from components.visualizer import (
     render_predictions,
     render_predictions_bytes,
@@ -421,7 +425,7 @@ with tab2:
                         data=dl_bytes,
                         file_name=f"annotated_{fn}",
                         mime="image/jpeg",
-                        key=f"dl_grid_{row_idx}_{col_idx}_{fn}_{time.time()}",
+                        key=f"dl_grid_{row_idx}_{col_idx}_{fn}",
                         use_container_width=True
                     )
 
@@ -526,117 +530,110 @@ with tab3:
 # TAB 4: Live Camera Stream (Live Feed, Bbox Overlay, & Video Download)
 # -------------------------------------------------------------------
 with tab4:
-    st.markdown("### 🎥 Live Camera Stream with Bounding Boxes & Video Download")
-    st.markdown("Subsamples **every 3rd frame** ($N=3$), renders **bounding boxes & emotion labels**, and allows downloading live stream session video and snapshots.")
+    st.markdown("### 🎥 Live Continuous Camera Stream")
+    st.markdown("Displays a **real-time live stream** from your webcam in HD. Live emotion events are logged below.")
 
-    if "streaming_active" not in st.session_state:
-        st.session_state.streaming_active = False
-    if "live_frame_counter" not in st.session_state:
-        st.session_state.live_frame_counter = 0
-    if "last_live_data" not in st.session_state:
-        st.session_state.last_live_data = None
-    if "live_session_frames" not in st.session_state:
-        st.session_state.live_session_frames = []
+    class EmotionVideoProcessor(VideoProcessorBase):
+        def __init__(self):
+            self.frame_count = 0
+            self.last_img_bgr = None
+            self.log_queue = queue.Queue()
 
-    btn_col1, btn_col2, btn_col3 = st.columns([1, 1, 1])
-    with btn_col1:
-        if st.button("▶️ Start Live Camera Stream", type="primary", use_container_width=True):
-            st.session_state.streaming_active = True
-            st.session_state.live_frame_counter = 0
-            st.session_state.last_live_data = None
-            st.session_state.live_session_frames = []
-    with btn_col2:
-        if st.button("⏹️ Stop Camera Stream", use_container_width=True):
-            st.session_state.streaming_active = False
-    with btn_col3:
-        if st.button("🔄 Clear Live Recording", use_container_width=True):
-            st.session_state.live_session_frames = []
-            st.session_state.last_live_data = None
-            st.success("Cleared live session buffer.")
+        def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
+            img_bgr = frame.to_ndarray(format="bgr24")
+            self.frame_count += 1
+            
+            # Subsample frames to maintain high framerate and avoid overloading backend
+            if self.frame_count % VIDEO_FRAME_STRIDE == 0 or self.last_img_bgr is None:
+                success, buffer = cv2.imencode('.jpg', img_bgr)
+                if success:
+                    try:
+                        # Direct HTTP call to the backend
+                        resp = call_predict_api(buffer.tobytes(), "stream.jpg", is_stream=True)
+                        if resp.status_code == 200:
+                            data = resp.json()
+                            dets = data.get("detections", [])
+                            
+                            # Safely put detections into queue for the main thread to read
+                            if len(dets) == 0:
+                                self.log_queue.put({
+                                    "Frame": self.frame_count,
+                                    "Track ID": "-",
+                                    "Emotion": "No Face Detected",
+                                    "Emotion Conf": "-",
+                                    "Face Conf": "-"
+                                })
+                            else:
+                                for det in dets:
+                                    self.log_queue.put({
+                                        "Frame": self.frame_count,
+                                        "Track ID": det.get("track_id", det.get("face_id", 0) + 1),
+                                        "Emotion": det["emotion_label"],
+                                        "Emotion Conf": f"{det['emotion_confidence']*100:.1f}%",
+                                        "Face Conf": f"{det['face_confidence']*100:.1f}%"
+                                    })
+
+                            # Re-render the bounding boxes
+                            ann_pil = render_predictions(buffer.tobytes(), dets)
+                            img_rgb = np.array(ann_pil)
+                            self.last_img_bgr = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
+                        else:
+                            self.last_img_bgr = img_bgr
+                    except Exception:
+                        self.last_img_bgr = img_bgr
+            
+            out_img = self.last_img_bgr if self.last_img_bgr is not None else img_bgr
+            return av.VideoFrame.from_ndarray(out_img, format="bgr24")
+
+    # The webrtc_streamer will expand to fill the container width and request 720p HD
+    webrtc_ctx = webrtc_streamer(
+        key="emotion-stream",
+        mode=WebRtcMode.SENDRECV,
+        video_processor_factory=EmotionVideoProcessor,
+        media_stream_constraints={"video": {"width": {"ideal": 1280}, "height": {"ideal": 720}}, "audio": False},
+        video_html_attrs={
+            "style": {"width": "100%", "margin": "0 auto", "border": "2px solid #3B82F6", "border-radius": "10px"}
+        },
+        async_processing=True
+    )
 
     st.markdown("---")
+    st.markdown("#### 📡 Live Event Logs")
+    
+    log_placeholder = st.empty()
+    download_placeholder = st.empty()
 
-    if st.session_state.streaming_active:
-        st.success("🟢 Live Camera Stream Active — Click 'Stop Camera Stream' above to pause.")
-        
-        cam_input = st.camera_input("Live Feed Camera", key="live_stream_feed")
+    if "live_logs" not in st.session_state:
+        st.session_state.live_logs = []
 
-        if cam_input is not None:
-            st.session_state.live_frame_counter += 1
-            counter = st.session_state.live_frame_counter
-            cam_bytes = cam_input.getvalue()
-
-            # Process prediction every 3rd frame
-            if counter % VIDEO_FRAME_STRIDE == 0 or st.session_state.last_live_data is None:
-                t0 = time.time()
+    if webrtc_ctx.state.playing:
+        while True:
+            if webrtc_ctx.video_processor:
                 try:
-                    resp = call_predict_api(cam_bytes, "live_snapshot.jpg", is_stream=True)
-                    latency_ms = round((time.time() - t0) * 1000, 1)
-
-                    if resp.status_code == 200:
-                        c_data = resp.json()
-                        st.session_state.last_live_data = (c_data, cam_bytes, latency_ms)
-
-                        # Render annotated frame image & store in live session frames
-                        dets = c_data.get("detections", [])
-                        ann_pil = render_predictions(cam_bytes, dets)
-                        st.session_state.live_session_frames.append(np.array(ann_pil))
-                except Exception as e:
-                    st.error(f"Live stream frame error: {e}")
-
-            # Display last processed live prediction with download options
-            if st.session_state.last_live_data:
-                c_data, last_bytes, lat_ms = st.session_state.last_live_data
-                col_cam_img, col_cam_stats = st.columns([1.2, 1])
-
-                dets = c_data.get("detections", [])
-                annotated_cam_pil = render_predictions(last_bytes, dets)
-
-                with col_cam_img:
-                    st.image(annotated_cam_pil, caption=f"Live Detection Overlay (Frame #{counter}, Subsampled Every 3rd Frame)", use_container_width=True)
+                    # Pop logs from the background thread processing video
+                    log_entry = webrtc_ctx.video_processor.log_queue.get(timeout=1.0)
+                    st.session_state.live_logs.append(log_entry)
                     
-                    # Individual Download Button for current live frame snapshot
-                    live_snapshot_dl_bytes = render_predictions_bytes(last_bytes, dets, format="JPEG")
-                    st.download_button(
-                        label="📥 Download Live Frame Snapshot (.jpg)",
-                        data=live_snapshot_dl_bytes,
-                        file_name=f"live_frame_{counter}.jpg",
-                        mime="image/jpeg",
-                        use_container_width=True
-                    )
-
-                with col_cam_stats:
-                    st.markdown("#### ⚡ Live Subsampled Metrics")
-                    st.metric("Frame Count", f"#{counter} (1-in-3 stride)")
-                    st.metric("Detected Faces", c_data["total_faces"])
-                    st.metric("Prediction Latency", f"{lat_ms} ms")
-
-                    if c_data["total_faces"] > 0:
-                        for det in dets:
-                            track_id = det.get("track_id", det["face_id"] + 1)
-                            st.metric(
-                                label=f"Face #{track_id} — {det['emotion_label']}",
-                                value=f"{det['emotion_confidence']*100:.1f}% Emo Conf",
-                                delta=f"{det['face_confidence']*100:.1f}% Face Conf"
-                            )
-
-    else:
-        st.info("💡 Click **'Start Live Camera Stream'** above to activate camera feed and 1-in-3 subsampled predictions.")
-
-    # Live Session Video Export & Download
-    if st.session_state.live_session_frames:
-        st.markdown("---")
-        st.markdown(f"#### 🎬 Live Stream Session Video ({len(st.session_state.live_session_frames)} Processed Frames Recorded)")
+                    # Update UI with the latest 10 logs so it doesn't freeze the browser
+                    latest_logs = st.session_state.live_logs[-10:]
+                    df_logs = pd.DataFrame(latest_logs)
+                    log_placeholder.dataframe(df_logs, use_container_width=True)
+                except queue.Empty:
+                    pass
+            else:
+                break
+    
+    # Render Download Button if logs exist (even if stream is stopped)
+    if not webrtc_ctx.state.playing and len(st.session_state.live_logs) > 0:
+        df_all = pd.DataFrame(st.session_state.live_logs)
+        log_placeholder.dataframe(df_all.tail(15), use_container_width=True)
         
-        live_vid_bytes = create_video_from_frames(st.session_state.live_session_frames, fps=3.0)
-
-        if live_vid_bytes:
-            st.video(live_vid_bytes)
-            st.download_button(
-                label="📥 Download Live Stream Session Video (.mp4)",
-                data=live_vid_bytes,
-                file_name="live_stream_session.mp4",
-                mime="video/mp4",
-                type="primary",
-                use_container_width=True
-            )
+        csv_v = df_all.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="📥 Download Complete Live Stream Logs (.csv)",
+            data=csv_v,
+            file_name="live_stream_logs.csv",
+            mime="text/csv",
+            type="primary",
+            use_container_width=True
+        )

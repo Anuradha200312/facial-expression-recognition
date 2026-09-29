@@ -4,8 +4,6 @@ __pycache__/
 *.pyd
 .pytest_cache/
 tests/
-models/*.pt
-models/*.pth
-models/*.onnx
+
 .git
 .gitignore

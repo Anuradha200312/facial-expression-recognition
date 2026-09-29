@@ -16,4 +16,20 @@ backend/models/*.pt
 backend/models/*.onnx
 backend/models/*.pth
 *.pt
+*.pth
+*.onnx
+*.ckpt
+*.weights
 
+# Training, Datasets & Logs
+training/
+datasets/
+data/
+logs/
+runs/
+checkpoints/
+
+# IDE and OS files
+.vscode/
+.idea/
+.DS_Store

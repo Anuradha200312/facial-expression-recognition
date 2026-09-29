@@ -63,7 +63,9 @@ def create_video_from_frames(frames_rgb: list, fps: float = 5.0) -> bytes:
     """Encodes a list of RGB numpy image frames into H.264 MP4 video bytes for video display and download."""
     if not frames_rgb:
         return b""
-    out_path = tempfile.mktemp(suffix=".mp4")
+    out_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
+    out_path = out_file.name
+    out_file.close()
     try:
         import imageio
         writer = imageio.get_writer(out_path, fps=fps, codec="libx264", macro_block_size=1)

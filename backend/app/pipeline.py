@@ -1,3 +1,4 @@
+import base64
 import time
 import os
 import tempfile
@@ -98,13 +99,16 @@ class Pipeline:
         if frame_stride is None or frame_stride < 1:
             frame_stride = DEFAULT_VIDEO_FRAME_STRIDE
 
-        self.detector.reset_tracker()
+        from .detector import CentroidFaceTracker
+        local_tracker = CentroidFaceTracker()
 
         with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(filename)[1]) as in_file:
             in_file.write(video_bytes)
             in_path = in_file.name
 
-        out_path = tempfile.mktemp(suffix=".mp4")
+        out_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
+        out_path = out_file.name
+        out_file.close()
 
         cap = cv2.VideoCapture(in_path)
         if not cap.isOpened():
@@ -125,7 +129,8 @@ class Pipeline:
                 break
 
             if frame_idx % frame_stride == 0:
-                faces = self.detector.track(frame, conf_thresh=conf_thresh, margin=margin)
+                faces = self.detector.detect(frame, conf_thresh=conf_thresh, margin=margin)
+                faces = local_tracker.update(faces)
                 annotated_frame = frame.copy()
                 frame_faces = []
 
