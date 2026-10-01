@@ -590,9 +590,13 @@ with tab4:
         key="emotion-stream",
         mode=WebRtcMode.SENDRECV,
         video_processor_factory=EmotionVideoProcessor,
-        media_stream_constraints={"video": {"width": {"ideal": 1280}, "height": {"ideal": 720}}, "audio": False},
+        media_stream_constraints={"video": {"width": {"ideal": 1280}, "height": {"ideal": 720}, "frameRate": {"ideal": 60}}, "audio": False},
         video_html_attrs={
-            "style": {"width": "100%", "margin": "0 auto", "border": "2px solid #3B82F6", "border-radius": "10px"}
+            "style": {"width": "100%", "margin": "0 auto", "border": "2px solid #3B82F6", "border-radius": "10px"},
+            "autoPlay": True,
+            "controls": False,
+            "playsinline": True,
+            "muted": True
         },
         async_processing=True
     )
